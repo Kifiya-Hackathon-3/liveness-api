@@ -2,7 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0f1419" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="format-detection" content="telephone=no" />
     <title>Liveness detection demo</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -19,12 +31,54 @@
         <div class="video-wrap">
           <video id="webcam" playsinline autoplay muted></video>
           <canvas id="overlay" aria-hidden="true"></canvas>
-          <div id="status-pill" class="pill pill--idle">Starting…</div>
+          <div id="status-pill" class="pill pill--idle">Ready</div>
         </div>
 
         <section class="panel">
-          <h2 id="instruction">Allow camera access to begin.</h2>
-          <p id="hint" class="hint"></p>
+          <details class="panel__steps" id="liveness-steps" aria-label="Step overview">
+            <summary class="panel__steps-summary">
+              <span class="panel__eyebrow panel__eyebrow--inline"
+                >All steps</span
+              >
+              <span class="panel__steps-cue">3 steps · tap to read</span>
+            </summary>
+            <ol class="step-list" id="step-list" aria-label="Liveness steps">
+              <li id="step-face" class="step step--todo" data-step="1">
+                <span class="step__marker" aria-hidden="true">1</span>
+                <div class="step__body">
+                  <span class="step__title">Face in frame</span>
+                  <span class="step__detail"
+                    >Center your head, look at the camera, use good lighting.</span
+                  >
+                </div>
+              </li>
+              <li id="step-blink" class="step step--todo" data-step="2">
+                <span class="step__marker" aria-hidden="true">2</span>
+                <div class="step__body">
+                  <span class="step__title">Blink twice</span>
+                  <span class="step__detail"
+                    >Two full, natural blinks (not quick winks).</span
+                  >
+                </div>
+              </li>
+              <li id="step-smile" class="step step--todo" data-step="3">
+                <span class="step__marker" aria-hidden="true">3</span>
+                <div class="step__body">
+                  <span class="step__title">Hold a smile</span>
+                  <span class="step__detail"
+                    >Smile clearly and keep it steady for about one second.</span
+                  >
+                </div>
+              </li>
+            </ol>
+          </details>
+
+          <h2 id="instruction" class="instruction-title">
+            Tap “Start check”, then allow camera access when asked.
+          </h2>
+          <p id="hint" class="hint">
+            Video is analyzed on your device for this demo. Grant camera access when asked.
+          </p>
           <div class="progress" aria-hidden="true">
             <div id="progress-bar" class="progress__bar"></div>
           </div>
@@ -47,6 +101,41 @@
       </footer>
     </div>
 
-    <script type="module" src="liveness.js"></script>
+    <script>
+      (function () {
+        var steps = document.getElementById("liveness-steps");
+        if (steps && window.matchMedia("(min-width: 640px)").matches) {
+          steps.open = true;
+        }
+        var cfg = document.createElement("script");
+        cfg.src = "/config.js" + (window.location.search || "");
+        cfg.onload = function () {
+          var app = document.createElement("script");
+          app.type = "module";
+          app.src = "liveness.js";
+          app.onerror = function () {
+            var pill = document.getElementById("status-pill");
+            var ins = document.getElementById("instruction");
+            var hint = document.getElementById("hint");
+            if (pill) {
+              pill.textContent = "Load error";
+              pill.className = "pill pill--fail";
+            }
+            if (ins) ins.textContent = "Could not load liveness.js from this server.";
+            if (hint)
+              hint.textContent =
+                "Confirm the Go server is running and try a hard refresh (Ctrl+Shift+R).";
+          };
+          document.body.appendChild(app);
+        };
+        cfg.onerror = function () {
+          var hint = document.getElementById("hint");
+          if (hint)
+            hint.textContent = "Could not load /config.js — check that http://" +
+              (location.hostname || "127.0.0.1") + ":" + (location.port || "5501") + " is this server.";
+        };
+        document.body.appendChild(cfg);
+      })();
+    </script>
   </body>
 </html>

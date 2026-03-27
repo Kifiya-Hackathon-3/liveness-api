@@ -1,0 +1,3 @@
+# mkcert output — never commit private keys
+*
+!.gitignore

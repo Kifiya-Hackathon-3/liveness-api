@@ -1,0 +1,9 @@
+{
+  "remote.autoForwardPorts": true,
+  "remote.portsAttributes": {
+    "5501": {
+      "label": "Liveness Check UI",
+      "onAutoForward": "notify"
+    }
+  }
+}
