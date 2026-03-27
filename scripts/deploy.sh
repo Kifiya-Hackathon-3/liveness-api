@@ -120,35 +120,22 @@ check_git() {
   command -v git >/dev/null || fail "git not in PATH"
 }
 
-# Git 2.35+ refuses root (or another user) in a repo owned by the service user after install_systemd chown.
-_git_ensure_safe_directory() {
-  local dir="$1"
-  [[ -d "$dir/.git" ]] || return 0
-  if [[ "$PLAN_ONLY" -eq 1 ]]; then
-    plan "git config --global --add safe.directory \"\$(cd \"$dir\" && pwd)\"  # avoid dubious ownership"
-    return 0
-  fi
-  local canon
-  canon="$(cd "$dir" && pwd)"
-  if git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$canon"; then
-    return 0
-  fi
-  git config --global --add safe.directory "$canon"
-  log "git: marked safe.directory $canon (runner vs repo owner differ)"
+# Git 2.35+ "dubious ownership" when the deploy user ≠ repo owner (e.g. root vs liveness).
+# Per-invocation -c avoids relying on gitconfig (sudo HOME, missing safe.directory, etc.).
+_git() {
+  git -c safe.directory='*' "$@"
 }
 
 git_sync() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     log "Git: update $INSTALL_DIR (branch $BRANCH)"
-    _git_ensure_safe_directory "$INSTALL_DIR"
     if [[ "$PLAN_ONLY" -eq 1 ]]; then
-      plan "cd \"$INSTALL_DIR\" && git fetch origin && git checkout \"$BRANCH\" && git reset --hard \"origin/$BRANCH\""
+      plan "git -c safe.directory='*' -C \"$INSTALL_DIR\" fetch origin \"$BRANCH\" && git -c safe.directory='*' -C \"$INSTALL_DIR\" checkout \"$BRANCH\" && git -c safe.directory='*' -C \"$INSTALL_DIR\" reset --hard \"origin/$BRANCH\""
       return
     fi
-    cd "$INSTALL_DIR"
-    git fetch origin "$BRANCH"
-    git checkout "$BRANCH"
-    git reset --hard "origin/$BRANCH"
+    _git -C "$INSTALL_DIR" fetch origin "$BRANCH"
+    _git -C "$INSTALL_DIR" checkout "$BRANCH"
+    _git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
     return
   fi
 
@@ -156,12 +143,11 @@ git_sync() {
 
   log "Git: shallow clone $GIT_URL (origin, branch $BRANCH) -> $INSTALL_DIR"
   if [[ "$PLAN_ONLY" -eq 1 ]]; then
-    plan "mkdir -p \"$(dirname "$INSTALL_DIR")\" && git clone --branch \"$BRANCH\" --depth 1 \"$GIT_URL\" \"$INSTALL_DIR\""
+    plan "mkdir -p \"$(dirname "$INSTALL_DIR")\" && git -c safe.directory='*' clone --branch \"$BRANCH\" --depth 1 \"$GIT_URL\" \"$INSTALL_DIR\""
     return
   fi
   mkdir -p "$(dirname "$INSTALL_DIR")"
-  git clone --branch "$BRANCH" --depth 1 "$GIT_URL" "$INSTALL_DIR"
-  _git_ensure_safe_directory "$INSTALL_DIR"
+  _git clone --branch "$BRANCH" --depth 1 "$GIT_URL" "$INSTALL_DIR"
 }
 
 build_binary() {

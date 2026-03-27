@@ -24,6 +24,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$SCRIPT_DIR/deploy.sh" ]] || {
+  echo "error: run from the repo clone, e.g. sudo USE_IP=1 bash scripts/production-https.sh" >&2
+  echo "       (missing $SCRIPT_DIR/deploy.sh)" >&2
+  exit 1
+}
 
 DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
@@ -192,3 +197,13 @@ else
 fi
 
 log "Set API and tokens in $ENV_FILE (API_BASE, API_TOKEN, ...) then: systemctl restart liveness-check"
+
+log "=== sanity checks ==="
+if ! systemctl is-active --quiet liveness-check 2>/dev/null; then
+  log "WARN: liveness-check.service is not active. Diagnostics:"
+  systemctl --no-pager -l status liveness-check 2>/dev/null || true
+  log "       Logs: journalctl -u liveness-check -n 80 --no-pager"
+fi
+if ! systemctl is-active --quiet nginx 2>/dev/null; then
+  log "WARN: nginx is not active. Run: systemctl status nginx"
+fi
