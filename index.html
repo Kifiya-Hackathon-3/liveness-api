@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Liveness detection demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <h1>Liveness check</h1>
+        <p class="subtitle">
+          Uses your camera locally in the browser. Nothing is uploaded.
+        </p>
+      </header>
+
+      <main class="main">
+        <div class="video-wrap">
+          <video id="webcam" playsinline autoplay muted></video>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div id="status-pill" class="pill pill--idle">Starting…</div>
+        </div>
+
+        <section class="panel">
+          <h2 id="instruction">Allow camera access to begin.</h2>
+          <p id="hint" class="hint"></p>
+          <div class="progress" aria-hidden="true">
+            <div id="progress-bar" class="progress__bar"></div>
+          </div>
+          <div class="actions">
+            <button type="button" id="btn-start" class="btn btn--primary">
+              Start check
+            </button>
+            <button type="button" id="btn-reset" class="btn" hidden>
+              Try again
+            </button>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Demo: blink challenge + short smile. Requires a modern browser and
+          WebGL.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="liveness.js"></script>
+  </body>
+</html>
