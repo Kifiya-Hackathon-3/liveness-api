@@ -168,6 +168,7 @@ write_env_reference() {
   fi
   cat >"$ex" <<'EOF'
 # Systemd: copy settings into /etc/liveness-check/env (see EnvironmentFile in unit)
+# Behind nginx TLS: LISTEN_ADDR=127.0.0.1:5501 (see scripts/production-https.sh)
 # PORT=5501
 # LISTEN_ADDR=:5501
 # TLS_CERT_FILE=/etc/letsencrypt/live/example.com/fullchain.pem
