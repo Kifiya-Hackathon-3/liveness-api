@@ -1,30 +1,34 @@
 #!/usr/bin/env bash
-# Fetch https://github.com/Kifiya-Hackathon-3/liveness-api, deploy the Go app, terminate TLS with nginx + Let's Encrypt.
+# Deploy liveness-api behind nginx with TLS.
 #
-# Prerequisites (on the remote VPS):
-#   - Debian/Ubuntu, root or sudo
-#   - DNS: A (and AAAA if you use IPv6) for DOMAIN → this machine's public IP
-#   - Firewall: allow TCP 80, 443 (and 22 for SSH). Do NOT expose 5501 publicly when using this script.
+# Two modes:
+#   A) Let's Encrypt — needs a hostname (DOMAIN) and DNS pointing here.
+#   B) Public IP only — USE_IP=1, self-signed cert (browsers warn; OK for demos / internal).
 #
-# Usage:
+# Prerequisites (VPS):
+#   - Debian/Ubuntu, run as root
+#   - Firewall: TCP 80 + 443 open (and 22 for SSH). Do not expose 5501 publicly.
+#
+# Domain + Let's Encrypt:
 #   export DOMAIN=liveness.example.com
-#   export CERTBOT_EMAIL=admin@example.com          # optional; else LE registers without email
+#   export CERTBOT_EMAIL=admin@example.com   # optional
 #   sudo bash scripts/production-https.sh
 #
-# Re-run after DNS change or to update app: same command (idempotent).
+# Machine IP only (self-signed):
+#   sudo USE_IP=1 bash scripts/production-https.sh
+#   # or pin the listen address used in the cert:
+#   sudo USE_IP=1 SERVER_IP=185.222.240.66 bash scripts/production-https.sh
 #
-# Optional environment:
-#   INSTALL_DIR=/opt/liveness-check   BRANCH=main   GIT_URL=https://github.com/Kifiya-Hackathon-3/liveness-api.git
-#   SKIP_APT=1                        skip apt-get install (packages already present)
-#   DISABLE_NGINX_DEFAULT=1           remove sites-enabled/default (default: 1)
+# Optional: INSTALL_DIR BRANCH GIT_URL SKIP_APT DISABLE_NGINX_DEFAULT
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
+USE_IP="${USE_IP:-0}"
+SERVER_IP="${SERVER_IP:-}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/liveness-check}"
 BRANCH="${BRANCH:-main}"
 GIT_URL="${GIT_URL:-https://github.com/Kifiya-Hackathon-3/liveness-api.git}"
@@ -36,18 +40,79 @@ fail() { echo "error: $*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
 [[ "$(id -u)" -eq 0 ]] || fail "run as root: sudo bash $0"
-[[ -n "$DOMAIN" ]] || fail "set DOMAIN, e.g. export DOMAIN=liveness.example.com"
+
+MODE=""
+if [[ -n "$DOMAIN" ]]; then
+  MODE=letsencrypt
+elif [[ "$USE_IP" == "1" ]] || [[ -n "$SERVER_IP" ]]; then
+  MODE=selfsigned_ip
+else
+  fail "Either set DOMAIN=my.host for Let's Encrypt, or USE_IP=1 for HTTPS on this server's IP (self-signed)."
+fi
+
+detect_server_ip() {
+  if [[ -n "$SERVER_IP" ]]; then
+    echo "$SERVER_IP"
+    return
+  fi
+  local ip=""
+  ip="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  if [[ -z "$ip" ]]; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+  fi
+  [[ -n "$ip" ]] || fail "Could not detect public IPv4; set SERVER_IP=1.2.3.4 explicitly."
+  echo "$ip"
+}
+
+write_selfsigned_cert() {
+  local ip="$1"
+  local ssl_dir="/etc/nginx/ssl/liveness-check"
+  mkdir -p "$ssl_dir"
+  log "Generating self-signed certificate (CN/SAN: $ip) in $ssl_dir"
+  if openssl req -help 2>&1 | grep -q -- '-addext'; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+      -keyout "$ssl_dir/privkey.pem" \
+      -out "$ssl_dir/fullchain.pem" \
+      -subj "/CN=${ip}" \
+      -addext "subjectAltName=IP:${ip}"
+  else
+    local cnf
+    cnf="$(mktemp)"
+    cat >"$cnf" <<EOF
+[req]
+distinguished_name = req_dn
+req_extensions = v3_req
+prompt = no
+[req_dn]
+CN = ${ip}
+[v3_req]
+subjectAltName = IP:${ip}
+EOF
+    openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+      -keyout "$ssl_dir/privkey.pem" \
+      -out "$ssl_dir/fullchain.pem" \
+      -config "$cnf" -extensions v3_req
+    rm -f "$cnf"
+  fi
+  chmod 600 "$ssl_dir/privkey.pem"
+  chmod 644 "$ssl_dir/fullchain.pem"
+}
 
 if [[ "${SKIP_APT:-0}" != "1" ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y nginx certbot python3-certbot-nginx git curl ca-certificates
+  if [[ "$MODE" == "letsencrypt" ]]; then
+    apt-get install -y nginx certbot python3-certbot-nginx git curl ca-certificates openssl
+  else
+    apt-get install -y nginx git curl ca-certificates openssl
+  fi
 fi
 
 command -v nginx >/dev/null || fail "nginx not installed"
-command -v certbot >/dev/null || fail "certbot not installed"
+if [[ "$MODE" == "letsencrypt" ]]; then
+  command -v certbot >/dev/null || fail "certbot not installed"
+fi
 
-# go.mod requires Go 1.22+; stock apt is often older — install official toolchain to /usr/local/go if needed.
 export PATH="/usr/local/go/bin:${PATH}"
 if ! command -v go >/dev/null 2>&1 || ! go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
   _arch="$(uname -m)"
@@ -64,12 +129,10 @@ fi
 command -v go >/dev/null || fail "go missing after install"
 go version
 
-# Build + systemd (deploy.sh: git clone/pull, build, systemd unit)
 export GIT_URL BRANCH INSTALL_DIR
 log "=== app deploy (git + build + systemd) ==="
 bash "$SCRIPT_DIR/deploy.sh"
 
-# Bind the Go server to loopback only; TLS is on nginx.
 mkdir -p "$(dirname "$ENV_FILE")"
 touch "$ENV_FILE"
 ensure_kv() {
@@ -86,10 +149,19 @@ chmod 640 "$ENV_FILE" || true
 systemctl restart liveness-check
 log "App listens on 127.0.0.1:5501 (see $ENV_FILE)"
 
-log "=== nginx site ==="
 NGINX_AVAIL="/etc/nginx/sites-available/$NGINX_SITE"
 NGINX_EN="/etc/nginx/sites-enabled/$NGINX_SITE"
-sed "s/__DOMAIN__/${DOMAIN}/g" "$SCRIPT_DIR/nginx-liveness.conf.template" >"$NGINX_AVAIL"
+
+if [[ "$MODE" == "selfsigned_ip" ]]; then
+  SERVER_IP="$(detect_server_ip)"
+  log "=== TLS: self-signed for IP $SERVER_IP ==="
+  write_selfsigned_cert "$SERVER_IP"
+  cp -f "$SCRIPT_DIR/nginx-liveness-ip.conf" "$NGINX_AVAIL"
+else
+  log "=== nginx site (HTTP only — certbot adds HTTPS) ==="
+  sed "s/__DOMAIN__/${DOMAIN}/g" "$SCRIPT_DIR/nginx-liveness.conf.template" >"$NGINX_AVAIL"
+fi
+
 ln -sf "$NGINX_AVAIL" "$NGINX_EN"
 
 if [[ "$DISABLE_NGINX_DEFAULT" == "1" ]] && [[ -e /etc/nginx/sites-enabled/default ]]; then
@@ -100,16 +172,23 @@ fi
 nginx -t
 systemctl reload nginx
 
-log "=== Let's Encrypt (certbot nginx plugin) ==="
-CERT_ARGS=(--nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect)
-if [[ -n "$CERTBOT_EMAIL" ]]; then
-  CERT_ARGS+=(--email "$CERTBOT_EMAIL")
+if [[ "$MODE" == "letsencrypt" ]]; then
+  log "=== Let's Encrypt (certbot) ==="
+  CERT_ARGS=(--nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect)
+  if [[ -n "$CERTBOT_EMAIL" ]]; then
+    CERT_ARGS+=(--email "$CERTBOT_EMAIL")
+  else
+    CERT_ARGS+=(--register-unsafely-without-email)
+  fi
+  certbot "${CERT_ARGS[@]}"
+  systemctl reload nginx
+  log "=== done ==="
+  log "Open: https://${DOMAIN}/"
 else
-  CERT_ARGS+=(--register-unsafely-without-email)
+  log "=== done (self-signed) ==="
+  log "Open: https://${SERVER_IP}/"
+  log "Your browser will warn about the certificate — Advanced → proceed (or install this CA on clients)."
+  log "For phones to trust the camera/API reliably, use a real domain + Let's Encrypt (DOMAIN=...) instead."
 fi
-certbot "${CERT_ARGS[@]}"
 
-systemctl reload nginx
-log "=== done ==="
-log "Open: https://${DOMAIN}/"
 log "Set API and tokens in $ENV_FILE (API_BASE, API_TOKEN, ...) then: systemctl restart liveness-check"
