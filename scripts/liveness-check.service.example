@@ -1,0 +1,23 @@
+# Copy to /etc/systemd/system/liveness-check.service and adjust paths/user.
+# Env file (optional): create /etc/liveness-check/env with KEY=value lines.
+
+[Unit]
+Description=Liveness Check UI (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liveness
+Group=liveness
+WorkingDirectory=/opt/liveness-check
+EnvironmentFile=-/etc/liveness-check/env
+ExecStart=/opt/liveness-check/bin/liveness-check
+Restart=on-failure
+RestartSec=5
+# Hardening (optional; relax if something breaks)
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
